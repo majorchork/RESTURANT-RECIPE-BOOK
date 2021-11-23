@@ -67,7 +67,8 @@ func main()  {
 	router.GET("/", welcomeHandler)
 
 	// define crud endpoints
-
+	router.POST("/signup", signUpChef)
+	router.POST("/login", loginChef)
 
 }
 
@@ -152,6 +153,64 @@ func signUpChef(c *gin.Context){
 
 	c.JSON(200, gin.H{
 		"Message": "Successful",
+		"token": jwtTokenString,
+		"data": chef,
+	})
+
+}
+
+func loginChef(c *gin.Context) {
+	loginReq := struct {
+		Email string `json:"email"`
+		Password string `json:"password"`
+	}{}
+	err := c.ShouldBindJSON(&loginReq)
+	if err != nil {
+		c.JSON(400, gin.H{
+			"error": "invalid request data",
+		})
+		return
+	}
+	var chef Chef
+	query := bson.M{
+		"email": loginReq.Email,
+	}
+	err = dbClient.Database(DbName).Collection(ChefCollection).FindOne(context.Background(), query).Decode(&chef)
+	if err != nil {
+		fmt.Println("error getting user fromm db: %v\n", err)
+		c.JSON(500, gin.H{
+			"eroor": "Unable to process request, Could not get User",
+
+		})
+		return
+	}
+
+	// if found compare and hash password
+	err = bcrypt.CompareHashAndPassword([]byte(chef.Password), []byte(loginReq.Password))
+	if err != nil {
+		fmt.Println("error validating password: %v\n", err)
+		c.JSON(500, gin.H{
+			"error": "Invalid Login details",
+		})
+		return
+	}
+	// define claims data
+	// create and return a jwt token with claims
+
+	claims := &Claims{
+		UserId: chef.ID,
+		StandardClaims: jwt.StandardClaims{
+			IssuedAt: time.Now().Unix(),
+			ExpiresAt: time.Now().Add(time.Hour * 1).Unix(),
+		},
+	}
+
+	// generate token with claims
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	jwtTokenString, err := token.SignedString([]byte(jwtSecret))
+
+	c.JSON(200, gin.H{
+		"message": "login successful",
 		"token": jwtTokenString,
 		"data": chef,
 	})
