@@ -4,14 +4,16 @@ import (
 	"context"
 	"fmt"
 	"github.com/gin-gonic/gin"
-	"github.com/satori/go.uuid"
 	"github.com/golang-jwt/jwt/v4"
+	"github.com/satori/go.uuid"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
-		"golang.org/x/crypto/bcrypt"
+	"golang.org/x/crypto/bcrypt"
 	"log"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -57,7 +59,7 @@ func main()  {
 	dbClient = client
 	err = dbClient.Ping(ctx, readpref.Primary())
 	if err != nil{
-		log.Fatalf("Mondo db not available: %v/n", err)
+		log.Fatalf("Mondo db not available: %v\n", err)
 	}
 
 	// create a gin router
@@ -67,8 +69,24 @@ func main()  {
 	router.GET("/", welcomeHandler)
 
 	// define crud endpoints
+	// c=create, r=retrieve, u=update, d=delete
+	//create
 	router.POST("/signup", signUpChef)
 	router.POST("/login", loginChef)
+	router.POST("/create", createRecipe)
+
+	// retrieve
+
+	// update
+
+	// delete
+
+	// run the server on port 3000
+	port := os.Getenv("PORT")
+	if port == ""{
+		port = "3000"
+	}
+	_ = router.Run(":" + port)
 
 }
 
@@ -215,4 +233,97 @@ func loginChef(c *gin.Context) {
 		"data": chef,
 	})
 
+}
+
+func createRecipe(c *gin.Context){
+
+	// create task for a specific user
+	//  we need to find out the identity of the user
+	//  this endpoint does not request for the users details like email or user id
+	// as you've already gotten the details during login
+	//  the request only contains the task and the jwt token
+
+	//  the jwt token is what we use to identify the user
+	// we generate this token during login or signup
+	// because it is at that point that we confirm things like password and other security details we might be intersted in
+	// you can't be asking the user for password at every endpoint
+	// the jwt only contains the things we put inside
+	// the only thing we need for our app to identify the user is the users id
+
+	// for http request, the standard way the jwt is usually sent is as a request header
+	// we need to get jwt token from request header using then key
+	// for the jwt the key name is "Authorization"
+	authorization := c.Request.Header.Get("Authorization")
+
+	// we return an error if the token was not supplied
+
+	if authorization == "" {
+		c.JSON(400, gin.H{
+			"error": "authentication token not supplied",
+		})
+		return
+	}
+	jwtToken := ""
+
+	// split the authenthication token which looks like "Bearer asdsadsdsdsdsa........."
+	//  so that we can get the second part of the string which is the actual jwt token
+	splitTokenArray := strings.Split(authorization,"")
+	if len(splitTokenArray) >1 {
+		jwtToken = splitTokenArray[1]
+	}
+	// create an empty claims array to store the claims (userid,......)
+	// decode the token to get claims
+	claims := &Claims{}
+
+	keyFunc := func(token *jwt.Token) (i interface{}, e error){
+		return []byte(jwtSecret), nil
+	}
+	//  this function helps us validate the token
+	// and if valid would store the claims inside the empty claims object we supplied to it (we supply a pointer)
+	token, err := jwt.ParseWithClaims(jwtToken, claims,keyFunc)
+
+	// we can check this token.valid boolean value to know if the token is valid
+	if !token.Valid{
+		c.JSON(400, gin.H{
+			"error":"invalid jwt token",
+		})
+		return
+	}
+	// now that we have validated the token and we've been able to get the users identity
+	// we can continue the request
+
+	// create an empty task object to get the request body
+	var recipeReq Recipe
+
+	err = c.ShouldBindJSON(&recipeReq)
+	if err != nil {
+		c.JSON(400, gin.H{
+			"error": "invalid request data",
+		})
+		return
+	}
+	// generate recipe id
+	recipeId := uuid.NewV4().String()
+
+	recipe := Recipe{
+		ID: recipeId,
+		DishName: recipeReq.DishName,
+		Chef:     claims.UserId,
+		Ingredients: recipeReq.Ingredients,
+		Instructions: recipeReq.Instructions,
+		Ts: time.Now(),
+	}
+	_, err = dbClient.Database(DbName).Collection(RecipeCollection).InsertOne(context.Background(), recipe)
+	if err != nil{
+		fmt.Println("error creating recipe", err)
+		c.JSON(500, gin.H{
+			"error":"unable to process request, error creating reicpe",
+		})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"message": "succesfully added recipe",
+		"data": recipe,
+	})
 }
